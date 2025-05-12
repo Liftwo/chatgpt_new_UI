@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>聊天機器人</title>
+  <style>
+    :root {
+      --bg-color: #343541;
+      --chat-bg: #444654;
+      --user-msg-bg: #10a37f;
+      --assistant-msg-bg: #3e3f4b;
+      --text-color: #ffffff;
+      --border-color: #565869;
+    }
+    body {
+      font-family: sans-serif;
+      background: var(--bg-color);
+      color: var(--text-color);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    #chat-container {
+      background: var(--chat-bg);
+      width: 95%;
+      max-width: 960px;
+      height: 90vh;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+    }
+    #chat-box {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .group {
+      margin-bottom: 16px;
+      cursor: pointer;
+    }
+    .msg {
+      margin: 6px 0;
+      padding: 12px;
+      border-radius: 8px;
+      max-width: 90%;
+      white-space: pre-wrap;
+    }
+    .user {
+      align-self: flex-end;
+      background-color: var(--user-msg-bg);
+      text-align: right;
+    }
+    .assistant {
+      align-self: flex-start;
+      background-color: var(--assistant-msg-bg);
+      color: var(--text-color);
+    }
+    #input-area {
+      display: flex;
+      border-top: 1px solid var(--border-color);
+      padding: 10px;
+      background: var(--chat-bg);
+    }
+    #message-input {
+      flex: 1;
+      border: none;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 16px;
+      background: #202123;
+      color: var(--text-color);
+    }
+    #send-btn {
+      margin-left: 10px;
+      padding: 12px 16px;
+      background: #10a37f;
+      border: none;
+      color: white;
+      font-weight: bold;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .collapsed .assistant {
+      display: none;
+    }
+    .loading {
+      font-style: italic;
+      color: #aaa;
+    }
+    pre {
+      background: #202123;
+      color: #eee;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #2d2d2d;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div id="chat-container">
+    <div id="chat-box"></div>
+    <div id="input-area">
+      <input type="text" id="message-input" placeholder="輸入訊息..." />
+      <button id="send-btn">送出</button>
+    </div>
+  </div>
+
+  <script>
+    const socket = new WebSocket("ws://localhost:8000/ws");
+    const chatBox = document.getElementById("chat-box");
+    const input = document.getElementById("message-input");
+    const sendBtn = document.getElementById("send-btn");
+
+    let currentGroup = null;
+    let loadingDiv = null;
+
+    socket.addEventListener("open", () => {
+      console.log("WebSocket 連線成功");
+      const apiKey = prompt("請輸入你的 OpenAI API 金鑰：");
+      socket.send(JSON.stringify({ type: "register", api_key: apiKey }));
+    });
+
+    socket.addEventListener("message", (event) => {
+      const data = JSON.parse(event.data);
+      if (loadingDiv && currentGroup) {
+        currentGroup.removeChild(loadingDiv);
+        loadingDiv = null;
+      }
+      if (data.type === "reply") {
+        appendMessage("assistant", data.message);
+      } else if (data.type === "info") {
+        appendMessage("assistant", "✅ " + data.message);
+      } else if (data.type === "error") {
+        appendMessage("assistant", "⚠️ " + data.message);
+      }
+    });
+
+    function sendMessage() {
+      const msg = input.value;
+      if (msg.trim() === "") return;
+      appendMessage("user", msg);
+      socket.send(JSON.stringify({ type: "message", message: msg }));
+      input.value = "";
+
+      if (currentGroup) {
+        loadingDiv = document.createElement("div");
+        loadingDiv.className = "msg assistant loading";
+        loadingDiv.textContent = "AI 正在思考中...";
+        currentGroup.appendChild(loadingDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+    }
+
+    sendBtn.addEventListener("click", sendMessage);
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        sendMessage();
+      }
+    });
+
+    function appendMessage(role, message) {
+      if (role === "user") {
+        const group = document.createElement("div");
+        group.className = "group";
+        group.addEventListener("click", () => {
+          group.classList.toggle("collapsed");
+        });
+
+        const userDiv = document.createElement("div");
+        userDiv.className = `msg user`;
+        userDiv.textContent = message;
+        group.appendChild(userDiv);
+
+        chatBox.appendChild(group);
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        // 記錄這個 group，讓 AI 回覆可以加在這裡
+        currentGroup = group;
+      } else if (currentGroup) {
+        const replyDiv = document.createElement("div");
+        replyDiv.className = `msg assistant`;
+        replyDiv.innerHTML = marked.parse(message);
+        currentGroup.appendChild(replyDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        currentGroup = null; // 不影響之前的 group 展開/收起功能
+      }
+    }
+
+  </script>
+</body>
+</html>
