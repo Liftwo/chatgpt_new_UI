@@ -18,21 +18,42 @@
       background: var(--bg-color);
       color: var(--text-color);
       display: flex;
-      justify-content: center;
-      align-items: center;
       height: 100vh;
       margin: 0;
     }
-    #chat-container {
-      background: var(--chat-bg);
-      width: 95%;
-      max-width: 960px;
-      height: 90vh;
-      border-radius: 10px;
+    #sidebar {
+      width: 220px;
+      background: #202123;
+      border-right: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
-      overflow: hidden;
-      border: 1px solid var(--border-color);
+    }
+    #chat-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .chat-item {
+      padding: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #2c2d31;
+    }
+    .chat-item:hover {
+      background: #2f3035;
+    }
+    #new-chat-btn {
+      padding: 12px;
+      background: #10a37f;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #chat-container {
+      flex: 1;
+      background: var(--chat-bg);
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--border-color);
     }
     #chat-box {
       flex: 1;
@@ -75,7 +96,7 @@
       background: #202123;
       color: var(--text-color);
     }
-    #send-btn {
+    #send-btn, #collapse-all-btn {
       margin-left: 10px;
       padding: 12px 16px;
       background: #10a37f;
@@ -108,11 +129,16 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
+  <div id="sidebar">
+    <button id="new-chat-btn">＋ 新對話</button>
+    <div id="chat-list"></div>
+  </div>
   <div id="chat-container">
     <div id="chat-box"></div>
     <div id="input-area">
       <input type="text" id="message-input" placeholder="輸入訊息..." />
       <button id="send-btn">送出</button>
+      <button id="collapse-all-btn">收起全部</button>
     </div>
   </div>
 
@@ -121,14 +147,76 @@
     const chatBox = document.getElementById("chat-box");
     const input = document.getElementById("message-input");
     const sendBtn = document.getElementById("send-btn");
+    const collapseAllBtn = document.getElementById("collapse-all-btn");
+    const newChatBtn = document.getElementById("new-chat-btn");
+    const chatList = document.getElementById("chat-list");
 
-    let currentGroup = null;
+    let allChats = JSON.parse(localStorage.getItem("all_chats") || "{}");
+    let currentChatId = null;
     let loadingDiv = null;
+    let currentGroup = null;
+
+    function saveChats() {
+      localStorage.setItem("all_chats", JSON.stringify(allChats));
+    }
+
+    function switchChat(chatId) {
+      currentChatId = chatId;
+      chatBox.innerHTML = "";
+      const messages = allChats[chatId]?.messages || [];
+      messages.forEach(pair => {
+        const group = document.createElement("div");
+        group.className = "group";
+        group.addEventListener("click", () => group.classList.toggle("collapsed"));
+
+        const userDiv = document.createElement("div");
+        userDiv.className = "msg user";
+        userDiv.textContent = pair.user;
+        group.appendChild(userDiv);
+
+        const replyDiv = document.createElement("div");
+        replyDiv.className = "msg assistant";
+        replyDiv.innerHTML = marked.parse(pair.assistant);
+        group.appendChild(replyDiv);
+
+        chatBox.appendChild(group);
+      });
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function renderChatList() {
+      chatList.innerHTML = "";
+      Object.keys(allChats).forEach(chatId => {
+        const item = document.createElement("div");
+        item.className = "chat-item";
+        item.textContent = allChats[chatId].title || `對話 ${chatId}`;
+        item.addEventListener("click", () => switchChat(chatId));
+        chatList.appendChild(item);
+      });
+    }
+
+    function createNewChat() {
+      const newId = Date.now().toString();
+      allChats[newId] = { title: "New Chat", messages: [] };
+      saveChats();
+      renderChatList();
+      switchChat(newId);
+    }
+
+    newChatBtn.addEventListener("click", createNewChat);
+
+    collapseAllBtn.addEventListener("click", () => {
+      document.querySelectorAll(".group").forEach(group => group.classList.add("collapsed"));
+    });
 
     socket.addEventListener("open", () => {
-      console.log("WebSocket 連線成功");
       const apiKey = prompt("請輸入你的 OpenAI API 金鑰：");
       socket.send(JSON.stringify({ type: "register", api_key: apiKey }));
+      if (Object.keys(allChats).length === 0) createNewChat();
+      else {
+        renderChatList();
+        switchChat(Object.keys(allChats)[0]);
+      }
     });
 
     socket.addEventListener("message", (event) => {
@@ -148,7 +236,7 @@
 
     function sendMessage() {
       const msg = input.value;
-      if (msg.trim() === "") return;
+      if (msg.trim() === "" || !currentChatId) return;
       appendMessage("user", msg);
       socket.send(JSON.stringify({ type: "message", message: msg }));
       input.value = "";
@@ -164,18 +252,16 @@
 
     sendBtn.addEventListener("click", sendMessage);
     input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        sendMessage();
-      }
+      if (event.key === "Enter") sendMessage();
     });
 
     function appendMessage(role, message) {
+      if (!currentChatId) return;
+
       if (role === "user") {
         const group = document.createElement("div");
         group.className = "group";
-        group.addEventListener("click", () => {
-          group.classList.toggle("collapsed");
-        });
+        group.addEventListener("click", () => group.classList.toggle("collapsed"));
 
         const userDiv = document.createElement("div");
         userDiv.className = `msg user`;
@@ -185,8 +271,9 @@
         chatBox.appendChild(group);
         chatBox.scrollTop = chatBox.scrollHeight;
 
-        // 記錄這個 group，讓 AI 回覆可以加在這裡
         currentGroup = group;
+        allChats[currentChatId].messages.push({ user: message, assistant: "" });
+        saveChats();
       } else if (currentGroup) {
         const replyDiv = document.createElement("div");
         replyDiv.className = `msg assistant`;
@@ -194,10 +281,13 @@
         currentGroup.appendChild(replyDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
 
-        currentGroup = null; // 不影響之前的 group 展開/收起功能
+        const lastIndex = allChats[currentChatId].messages.length - 1;
+        allChats[currentChatId].messages[lastIndex].assistant = message;
+        saveChats();
+
+        currentGroup = null;
       }
     }
-
   </script>
 </body>
 </html>
